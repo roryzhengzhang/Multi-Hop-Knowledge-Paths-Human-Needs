@@ -22,7 +22,7 @@ except:
 class Human_needs(object):
     def __init__(self, config):
         self.config = config
-        self.UNK = "<unk>"
+        self.UNK = "<unk>" #UNK may refer to unknown?
         self.word2id = None
         self.embedding_matrix=[]
         self.term2index = None
@@ -64,7 +64,7 @@ class Human_needs(object):
                 if self.config["replace_digits"] == True:
                     w = re.sub(r'\d', '0', w)
                 word_counter[w] += 1
-                self.term2index[w] = count
+                self.term2index[w] = count #assign the index to word
                 count = count + 1
                
         for word in context:
@@ -78,7 +78,7 @@ class Human_needs(object):
                 self.term2index[w] = count
                 count = count + 1
         
-        self.word2id = collections.OrderedDict([(self.UNK, 0)])
+        self.word2id = collections.OrderedDict([(self.UNK, 0)]) #OrderedDict will iterate the (k,v) as the insertion order
         for word, count in word_counter.most_common():
             if self.config["min_word_freq"] <= 0 or count >= self.config["min_word_freq"]:
                 if word not in self.word2id:
@@ -100,13 +100,13 @@ class Human_needs(object):
             
             word2id_revised = collections.OrderedDict()
             for word in self.word2id:
-                if word in embedding_vocab and word not in word2id_revised:
+                if word in embedding_vocab and word not in word2id_revised: #add the new words in the embedding vocab file to the word2id dict
                     word2id_revised[word] = len(word2id_revised)
             self.word2id = word2id_revised
         
         self.index2term={}
         self.term2index = self.word2id
-        self.index2term = {v:k for k,v in self.term2index.items()}
+        self.index2term = {v:k for k,v in self.term2index.items()} #reverse the dict
         print("n_words: " + str(len(list(wp_vocab)))) 
         
         
@@ -139,7 +139,7 @@ class Human_needs(object):
                 
         self.initializer = None
         if self.config["initializer"] == "normal":
-            self.initializer = tf.random_normal_initializer(mean=0.0, stddev=0.1)
+            self.initializer = tf.random_normal_initializer(mean=0.0, stddev=0.1) #generate tensor in normal distribution
         elif self.config["initializer"] == "glorot":
             self.initializer = tf.glorot_uniform_initializer()
         elif self.config["initializer"] == "xavier":
@@ -154,6 +154,7 @@ class Human_needs(object):
          zeros_initializer = tf.zeros_initializer()
          input_tensor = None
          with tf.variable_scope("sentence"):
+          #use_peephole means that the cell could visit previous internal state as well as the hidden state, which is not allowed in LSTMCell 
           word_lstm_cell_fw = tf.nn.rnn_cell.LSTMCell(self.config["word_recurrent_size"], 
             use_peepholes=self.config["lstm_use_peepholes"], 
             state_is_tuple=True, 
@@ -171,6 +172,7 @@ class Human_needs(object):
                                  initializer=(zeros_initializer if self.config["emb_initial_zero"] == True else self.initializer), 
                                  trainable=(True if self.config["train_embeddings"] == True else False))
           use_elmo = True
+          #use ELMO word contextualized representation
           if use_elmo:
           	elmo = hub.Module("https://tfhub.dev/google/elmo/2", trainable=True)   
           	input_tensor = elmo(inputs={"tokens": self.sentence_tokens,"sequence_len": self.sentence_lengths},signature="tokens",as_dict=True)["elmo"]
@@ -179,6 +181,7 @@ class Human_needs(object):
           
           input_vector_size = self.config["word_embedding_size"]
           self.word_representations = input_tensor
+          #drop out some dims for word embedding
           dropout_input = self.config["dropout_input"] * tf.cast(self.is_training, tf.float32) + (1.0 - tf.cast(self.is_training, tf.float32))
           input_tensor =  tf.nn.dropout(input_tensor, dropout_input, name="dropout_word")
                 
@@ -187,7 +190,8 @@ class Human_needs(object):
           dropout_word_lstm = self.config["dropout_word_lstm"] * tf.cast(self.is_training, tf.float32) + (1.0 - tf.cast(self.is_training, tf.float32))
           lstm_outputs_fw =  tf.nn.dropout(lstm_outputs_fw, dropout_word_lstm, noise_shape=tf.convert_to_tensor([tf.shape(self.word_ids)[0],1,self.config["word_recurrent_size"]], dtype=tf.int32))
           lstm_outputs_bw =  tf.nn.dropout(lstm_outputs_bw, dropout_word_lstm, noise_shape=tf.convert_to_tensor([tf.shape(self.word_ids)[0],1,self.config["word_recurrent_size"]], dtype=tf.int32))
-          lstm_outputs = tf.concat([lstm_outputs_fw, lstm_outputs_bw], -1)
+          #sythesizw the lstm output by concatenating forward and backward outputs
+          lstm_outputs = tf.concat([lstm_outputs_fw, lstm_outputs_bw], -1) 
           #(lstm_outputs_fw, lstm_outputs_bw), ((_, lstm_output_fw), (_, lstm_output_bw)) = tf.nn.bidirectional_dynamic_rnn(word_lstm_cell_fw, word_lstm_cell_bw, input_tensor, sequence_length=self.sentence_lengths, dtype=tf.float32, time_major=False)
           
           #if self.config["hidden_layer_size"] > 0:
@@ -198,6 +202,7 @@ class Human_needs(object):
                 processed_tensor = lstm_outputs
                 self.attention_weights_unnormalised = tf.zeros_like(self.word_ids, dtype=tf.float32)
           elif self.config["sentence_composition"] == "attention":
+                #why doesn't use ReLU as activation function?
                 attention_evidence = tf.layers.dense(lstm_outputs, self.config["attention_evidence_size"], activation=tf.sigmoid, kernel_initializer=self.initializer)
                 attention_weights = tf.layers.dense(attention_evidence, 1, activation=None, kernel_initializer=self.initializer)
                 attention_weights = tf.reshape(attention_weights, shape=tf.shape(self.word_ids))
@@ -211,17 +216,21 @@ class Human_needs(object):
                     raise ValueError("Unknown activation for attention: " + str(self.config["attention_activation"]))
 
                 self.attention_weights_unnormalised = attention_weights
+                #To only keep the first 'sen_length' attention weights and set the rest as 0  "if condition is true on position i, return xi, otherwise return yi" (condition, x, y)
                 attention_weights = tf.where(tf.sequence_mask(self.sentence_lengths), attention_weights, tf.zeros_like(attention_weights))
+                #normalize it
                 attention_weights = attention_weights / tf.reduce_sum(attention_weights, 1, keep_dims=True)
                 processed_tensor_1 = tf.reduce_sum(lstm_outputs * attention_weights[:,:,numpy.newaxis], 1)
 
-          
+          #set the position beyond newaxis as -1e6
           self.token_scores = [tf.where(tf.sequence_mask(self.sentence_lengths), self.attention_weights_unnormalised, tf.zeros_like(self.attention_weights_unnormalised) - 1e6)]
           
           if self.config["hidden_layer_size"] > 0:
+              #if the sentence use the attention mechanism to encode
              if self.config["sentence_composition"] == "attention":
                 #processed_tensor_sentence = tf.reduce_mean(lstm_outputs,1) 
                 processed_tensor_sentence = tf.layers.dense(processed_tensor_1, self.config["hidden_layer_size"], activation=tf.nn.relu, kernel_initializer=self.initializer)
+              #if te senetence is just based on the last BiLSTM output
              elif self.config["sentence_composition"] == "last": 
                processed_tensor_sentence = tf.layers.dense(processed_tensor, self.config["hidden_layer_size"], activation=tf.nn.relu, kernel_initializer=self.initializer)
           #self.token_scores = [tf.where(tf.sequence_mask(self.sentence_lengths), self.attention_weights_unnormalised, tf.zeros_like(self.attention_weights_unnormalised) - 1e6)]
@@ -253,6 +262,7 @@ class Human_needs(object):
                 elmo = hub.Module("https://tfhub.dev/google/elmo/2", trainable=True)     
                 input_tensor= elmo(inputs={"tokens": self.context_tokens,"sequence_len": self.context_lengths},signature="tokens",as_dict=True)["elmo"]
           else:
+            #if not using elmo, then word_ids_contest look-up table is provided
           	input_tensor = tf.nn.embedding_lookup(self.word_embeddings, self.word_ids_context)  
           dropout_input = self.config["dropout_input"] * tf.cast(self.is_training, tf.float32) + (1.0 - tf.cast(self.is_training, tf.float32))
           input_tensor =  tf.nn.dropout(input_tensor, dropout_input, name="dropout_word")	    
@@ -269,9 +279,12 @@ class Human_needs(object):
           if self.config["sentence_composition"] == "last":
                 processed_tensor_context = lstm_outputs
                 self.attention_weights_unnormalised = tf.zeros_like(self.word_ids_context, dtype=tf.float32)
-          elif self.config["sentence_composition"] == "attention":      
+          elif self.config["sentence_composition"] == "attention": 
+                #In this case, the input is specified
+                #lstm_output is input, the second arg is the number of node of this 1 layer network 
+                #This is the hidden layer
                 attention_evidence = tf.layers.dense(lstm_outputs, self.config["attention_evidence_size"], activation=tf.sigmoid, kernel_initializer=self.initializer)
-
+                #the final output is 1-dim
                 attention_weights = tf.layers.dense(attention_evidence, 1, activation=None, kernel_initializer=self.initializer)
                 attention_weights = tf.reshape(attention_weights, shape=tf.shape(self.word_ids_context))
 
@@ -303,6 +316,7 @@ class Human_needs(object):
          if self.config["sentence_composition"] == "attention":
               dense_input_sen_con = tf.concat([processed_tensor_sentence, processed_tensor_context],1)
               final_score = tf.layers.dense(dense_input_sen_con, self.config["hidden_layer_size"], activation=tf.nn.relu, kernel_initializer=self.initializer)      
+              #The default hidden layer size is 100
               softmax_w = tf.get_variable('softmax_w', shape=[100, len(reiss)],initializer=tf.zeros_initializer, dtype=tf.float32)    
               
          elif self.config["sentence_composition"] == "last":   
@@ -312,6 +326,7 @@ class Human_needs(object):
               
               
          softmax_b = tf.get_variable('softmax_b', shape=[len(reiss)],initializer=tf.zeros_initializer, dtype=tf.float32)
+         #convert the hidden_layer_size to len(reiss)
          self.sentence_scores = tf.matmul(final_score, softmax_w) + softmax_b
           
           

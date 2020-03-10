@@ -43,13 +43,15 @@ class Human_needs(object):
                 data_source += data_dev
             if data_test != None:
                 data_source += data_test
-        
+        #lst2 seems the knowledge paths of each training data
+        #weight_per is the weight of paths of a training data
         id, sentences, lst2, weight_per, context, label_distribution= zip(*data_source) 
         
+        #build up the vocabs
         wp_vocab = set(token for sent in sentences for token in sent.split(' '))
         wp_vocab_knw = set(token for s in lst2 for sent in s for token in sent.split(' '))
         wp_vocab_context = set(token for sent in context for token in sent.split(' '))
-    
+        #union the three vocab together
         wp_vocab = wp_vocab.union(wp_vocab_knw)
         wp_vocab = wp_vocab.union(wp_vocab_context)
         #dim_embedding = 100
@@ -61,8 +63,9 @@ class Human_needs(object):
         self.term2index={}
         count=0
         
+        #word_counter stores the occurance of each word
         word_counter = collections.Counter()
-        
+        #pre-process the word, and assign an index to this term
         for word in sentences:
           for token in word.split(' '):
                 w = token
@@ -97,6 +100,7 @@ class Human_needs(object):
                 self.term2index[w] = count
                 count = count + 1
 
+        #set word a id
         self.word2id = collections.OrderedDict([(self.UNK, 0)])
         for word, count in word_counter.most_common():
             if self.config["min_word_freq"] <= 0 or count >= self.config["min_word_freq"]:
@@ -120,19 +124,21 @@ class Human_needs(object):
             word2id_revised = collections.OrderedDict()
             for word in self.word2id:
                 if word in embedding_vocab and word not in word2id_revised:
+                    #set those words in embedding_vocab with another (reviesed) id 
                     word2id_revised[word] = len(word2id_revised)
             self.word2id = word2id_revised
         
         self.index2term={}
         self.term2index = self.word2id
+        #reverse the mapping
         self.index2term = {v:k for k,v in self.term2index.items()}
         print("n_words: " + str(len(list(wp_vocab)))) 
         
         
     def construct_network(self):
     
-    
         tf.reset_default_graph()
+        #type, shape, name
         self.word_ids = tf.placeholder(tf.int32, [None, None], name="word_ids")
         self.sentence_lengths = tf.placeholder(tf.int32, [None], name="sentence_lengths")
         self.word_ids_knowledge = tf.placeholder(tf.int32, [None, None, None], name="word_ids_know")
@@ -188,12 +194,13 @@ class Human_needs(object):
             state_is_tuple=True, 
             initializer=self.initializer,
             reuse=False)
-            
+            #instantiate the 'word_embedding'
           self.word_embeddings = tf.get_variable("word_embeddings", 
                                  shape=[len(self.term2index), self.config["word_embedding_size"]], 
                                  initializer=(zeros_initializer if self.config["emb_initial_zero"] == True else self.initializer), 
                                  trainable=(True if self.config["train_embeddings"] == True else False))
           use_elmo = True
+          #get the input tensor
           if use_elmo:
           	elmo = hub.Module("https://tfhub.dev/google/elmo/2", trainable=True)   
           	input_tensor = elmo(inputs={"tokens": self.sentence_tokens,"sequence_len": self.sentence_lengths},signature="tokens",as_dict=True)["elmo"]
@@ -204,7 +211,7 @@ class Human_needs(object):
           self.word_representations = input_tensor
           dropout_input = self.config["dropout_input"] * tf.cast(self.is_training, tf.float32) + (1.0 - tf.cast(self.is_training, tf.float32))
           input_tensor =  tf.nn.dropout(input_tensor, dropout_input, name="dropout_word")
-                
+          #get the output of bi-lstm      
           (lstm_outputs_fw, lstm_outputs_bw), ((_, lstm_output_fw), (_, lstm_output_bw)) = tf.nn.bidirectional_dynamic_rnn(word_lstm_cell_fw, word_lstm_cell_bw, input_tensor, sequence_length=self.sentence_lengths, dtype=tf.float32, time_major=False)
           
           dropout_word_lstm = self.config["dropout_word_lstm"] * tf.cast(self.is_training, tf.float32) + (1.0 - tf.cast(self.is_training, tf.float32))
@@ -231,6 +238,7 @@ class Human_needs(object):
 
                 self.attention_weights_unnormalised = attention_weights
                 attention_weights = tf.where(tf.sequence_mask(self.sentence_lengths), attention_weights, tf.zeros_like(attention_weights))
+                #normalize the attention weights of each case
                 attention_weights = attention_weights / tf.reduce_sum(attention_weights, 1, keep_dims=True)
                 processed_tensor_1 = tf.reduce_sum(lstm_outputs * attention_weights[:,:,numpy.newaxis], 1)
 
