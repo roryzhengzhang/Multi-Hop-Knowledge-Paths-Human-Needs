@@ -15,6 +15,8 @@ output_path = results.output_path
 class_type = results.class_type
 
 input_file = pd.read_csv(input_path, header=0, dtype="string")
+input_file.fillna('', inplace=True)
+#print(input_file)
 
 maslow = np.array(['physiological', 'love', 'spiritual growth', 'esteem', 'stability'])
 reiss = np.array(['status', 'approval', 'tranquility', 'competition', 'health', 'family', 'romance', 'food', 'indep', 'power', 'order', 'curiosity', 'serenity', 'honor', 'belonging', 'contact', 'savings', 'idealism', 'rest'])
